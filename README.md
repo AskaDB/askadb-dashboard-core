@@ -1,1 +1,1 @@
-README.md
+Geração automática de dashboards e gráficos
