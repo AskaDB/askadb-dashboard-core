@@ -135,8 +135,7 @@ function generatePieChartConfig(data: DataPoint[], dataStructure: DataStructure)
           text: `Distribuição de ${valueColumn}`
         },
         legend: {
-          display: true,
-          position: 'bottom'
+          display: true
         }
       }
     }
@@ -201,13 +200,12 @@ function generateHorizontalBarChartConfig(data: DataPoint[], dataStructure: Data
         label: valueColumn,
         data: values,
         backgroundColor: generateColors(values.length),
-        borderColor: '#f59e0b',
+        borderColor: '#3b82f6',
         borderWidth: 1
       }]
     },
     options: {
       responsive: true,
-      indexAxis: 'y',
       plugins: {
         title: {
           display: true,
@@ -218,7 +216,7 @@ function generateHorizontalBarChartConfig(data: DataPoint[], dataStructure: Data
         }
       },
       scales: {
-        x: {
+        y: {
           beginAtZero: true
         }
       }
@@ -228,33 +226,22 @@ function generateHorizontalBarChartConfig(data: DataPoint[], dataStructure: Data
 
 function generateScatterPlotConfig(data: DataPoint[], dataStructure: DataStructure): ChartConfig {
   const columns = Object.keys(data[0] || {});
-  const numericColumns = columns.filter(col => 
-    dataStructure.columnTypes[col] === 'number'
-  );
+  const categoryColumn = findCategoryColumn(data, dataStructure);
+  const valueColumn = findValueColumn(data, dataStructure);
   
-  if (numericColumns.length < 2) {
-    return generateBarChartConfig(data, dataStructure);
-  }
-  
-  const xColumn = numericColumns[0];
-  const yColumn = numericColumns[1];
-  
-  const points = data.map(row => ({
-    x: Number(row[xColumn] || 0),
-    y: Number(row[yColumn] || 0)
-  }));
+  const labels = data.map(row => String(row[categoryColumn] || ''));
+  const values = data.map(row => Number(row[valueColumn] || 0));
   
   return {
     type: 'scatter_plot',
     data: {
-      labels: [],
+      labels,
       datasets: [{
-        label: `${yColumn} vs ${xColumn}`,
-        data: points,
-        backgroundColor: '#8b5cf6',
-        borderColor: '#8b5cf6',
-        pointRadius: 6,
-        pointHoverRadius: 8
+        label: valueColumn,
+        data: values,
+        backgroundColor: generateColors(values.length),
+        borderColor: '#3b82f6',
+        borderWidth: 1
       }]
     },
     options: {
@@ -262,24 +249,15 @@ function generateScatterPlotConfig(data: DataPoint[], dataStructure: DataStructu
       plugins: {
         title: {
           display: true,
-          text: `Correlação: ${yColumn} vs ${xColumn}`
+          text: `${valueColumn} vs ${categoryColumn}`
         },
         legend: {
           display: true
         }
       },
       scales: {
-        x: {
-          title: {
-            display: true,
-            text: xColumn
-          }
-        },
         y: {
-          title: {
-            display: true,
-            text: yColumn
-          }
+          beginAtZero: true
         }
       }
     }
@@ -287,13 +265,15 @@ function generateScatterPlotConfig(data: DataPoint[], dataStructure: DataStructu
 }
 
 function generateTableConfig(data: DataPoint[], dataStructure: DataStructure): ChartConfig {
+  const columns = Object.keys(data[0] || {});
+  
   return {
     type: 'table',
     data: {
-      labels: Object.keys(data[0] || {}),
+      labels: columns,
       datasets: [{
         label: 'Dados',
-        data: data.map(row => Object.values(row))
+        data: data.map((row, index) => index)
       }]
     },
     options: {
@@ -311,42 +291,20 @@ function generateTableConfig(data: DataPoint[], dataStructure: DataStructure): C
   };
 }
 
-// Helper functions
 function findCategoryColumn(data: DataPoint[], dataStructure: DataStructure): string {
   const columns = Object.keys(data[0] || {});
   
-  // Look for geographic columns first
-  const geographicColumns = columns.filter(col => 
-    col.toLowerCase().includes('region') || 
-    col.toLowerCase().includes('country') ||
-    col.toLowerCase().includes('state') ||
-    col.toLowerCase().includes('city')
-  );
-  
-  if (geographicColumns.length > 0) {
-    return geographicColumns[0];
+  // Look for string columns first
+  for (const column of columns) {
+    if (dataStructure.columnTypes[column] === 'string') {
+      return column;
+    }
   }
   
-  // Look for time-related columns
-  const timeColumns = columns.filter(col => 
-    col.toLowerCase().includes('month') || 
-    col.toLowerCase().includes('date') ||
-    col.toLowerCase().includes('time')
-  );
-  
-  if (timeColumns.length > 0) {
-    return timeColumns[0];
-  }
-  
-  // Look for string columns with limited unique values
-  const stringColumns = columns.filter(col => 
-    dataStructure.columnTypes[col] === 'string'
-  );
-  
-  for (const col of stringColumns) {
-    const uniqueValues = new Set(data.map(row => row[col]));
-    if (uniqueValues.size > 1 && uniqueValues.size <= 20) {
-      return col;
+  // Look for date columns
+  for (const column of columns) {
+    if (dataStructure.columnTypes[column] === 'date') {
+      return column;
     }
   }
   
@@ -357,31 +315,15 @@ function findCategoryColumn(data: DataPoint[], dataStructure: DataStructure): st
 function findValueColumn(data: DataPoint[], dataStructure: DataStructure): string {
   const columns = Object.keys(data[0] || {});
   
-  // Look for numeric columns
-  const numericColumns = columns.filter(col => 
-    dataStructure.columnTypes[col] === 'number'
-  );
-  
-  // Prefer columns with 'sales', 'amount', 'total', 'value' in the name
-  const preferredColumns = numericColumns.filter(col => 
-    col.toLowerCase().includes('sales') ||
-    col.toLowerCase().includes('amount') ||
-    col.toLowerCase().includes('total') ||
-    col.toLowerCase().includes('value') ||
-    col.toLowerCase().includes('quantity')
-  );
-  
-  if (preferredColumns.length > 0) {
-    return preferredColumns[0];
+  // Look for number columns first
+  for (const column of columns) {
+    if (dataStructure.columnTypes[column] === 'number') {
+      return column;
+    }
   }
   
-  // Return first numeric column
-  if (numericColumns.length > 0) {
-    return numericColumns[0];
-  }
-  
-  // Default to first column
-  return columns[0] || '';
+  // Default to second column or first if only one exists
+  return columns[1] || columns[0] || '';
 }
 
 function generateColors(count: number): string[] {
@@ -390,7 +332,7 @@ function generateColors(count: number): string[] {
     '#06b6d4', '#84cc16', '#f97316', '#ec4899', '#6366f1'
   ];
   
-  const result = [];
+  const result: string[] = [];
   for (let i = 0; i < count; i++) {
     result.push(colors[i % colors.length]);
   }

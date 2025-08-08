@@ -38,9 +38,11 @@ export interface ChartConfig {
     datasets: Array<{
       label: string;
       data: number[];
-      backgroundColor?: string[];
+      backgroundColor?: string | string[];
       borderColor?: string;
       borderWidth?: number;
+      fill?: boolean;
+      tension?: number;
     }>;
   };
   options: {
