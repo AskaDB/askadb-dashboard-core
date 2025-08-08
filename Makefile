@@ -1,11 +1,28 @@
-help:
-	@echo "Targets disponíveis:"
-	@echo "  build   - construir biblioteca (defina suas tasks)"
-	@echo "  test    - rodar testes"
+NODE ?= node
+NPM ?= npm
+PORT ?= 8003
+
+install:
+	$(NPM) install
 
 build:
-	@echo "Defina o processo de build aqui (ex.: npm run build ou python setup.py bdist_wheel)"
+	$(NPM) run build
+
+dev:
+	$(NPM) run dev:server
+
+start:
+	$(NPM) start
 
 test:
-	@echo "Defina os testes aqui (ex.: npm test ou pytest)"
+	$(NPM) test
+
+clean:
+	rm -rf node_modules dist
+
+docker-build:
+	docker build -t askadb-dashboard-core .
+
+docker-run:
+	docker run -p $(PORT):$(PORT) askadb-dashboard-core
 
