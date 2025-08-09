@@ -33,9 +33,30 @@ export class AutoChartingEngine {
       hasTwoNumbers: numberColumns.length >= 2,
       hasTwoCategories,
     });
-    
+
+    const asksGrowth = ['crescimento','growth','variação','evolução','aumento','queda','diferença','comparar mês','comparar mes']
+      .some(k => question.includes(k));
+    const asksDistribution = ['proporção','proporcao','distribuição','percentual','participação','participacao']
+      .some(k => question.includes(k));
+    const asksTrend = ['tendência','tendencia','ao longo','timeline'].some(k => question.includes(k));
+    const hasTime = dataStructure.hasTimeSeries || dateLikeColumns.length > 0;
+
     for (const chartType of chartTypes) {
-      const config = generateChartConfig(chartType, data, dataStructure);
+      let config = generateChartConfig(chartType, data, dataStructure);
+
+      // Enrich: percent-of-total mode for proportion/participation
+      if (asksDistribution) {
+        config = this.applyPercentOfTotal(config);
+      }
+
+      // Enrich: growth series and KPI cards for time/growth questions
+      if ((asksGrowth || asksTrend) && (chartType === 'line_chart' || chartType === 'area_chart') && hasTime) {
+        config = this.applyGrowthEnrichment(config);
+      }
+
+      // Add narrative
+      config = this.attachNarrative(config, data);
+
       const suggestion = this.createChartSuggestion(chartType, config, dataStructure, originalQuestion);
       suggestions.push(suggestion);
     }
@@ -83,6 +104,167 @@ export class AutoChartingEngine {
       rowCount: data.length,
       columnCount: columns.length
     };
+  }
+
+  // Percent-of-total transformation (stacked bar or pie)
+  private applyPercentOfTotal(config: any): any {
+    if (!config?.data?.datasets || !config?.data?.labels) return config;
+
+    const cloned = JSON.parse(JSON.stringify(config));
+
+    // For bar charts with multiple datasets: normalize per label across datasets
+    if (cloned.type === 'bar_chart' && cloned.data.datasets.length > 1) {
+      const labels: string[] = cloned.data.labels;
+      const datasets = cloned.data.datasets;
+      for (let li = 0; li < labels.length; li++) {
+        const totalAtLabel = datasets.reduce((acc: number, ds: any) => acc + (Number(ds.data?.[li] ?? 0)), 0) || 1;
+        for (const ds of datasets) {
+          const val = Number(ds.data?.[li] ?? 0);
+          ds.data[li] = Number(((val / totalAtLabel) * 100).toFixed(2));
+        }
+      }
+      cloned.options = cloned.options || {};
+      cloned.options.scales = cloned.options.scales || {};
+      cloned.options.scales.x = { ...(cloned.options.scales.x || {}), stacked: true };
+      cloned.options.scales.y = { ...(cloned.options.scales.y || {}), beginAtZero: true, max: 100, stacked: true, ticks: { callback: (v: number) => `${v}%` } };
+      cloned.options.plugins = cloned.options.plugins || {};
+      cloned.options.plugins.tooltip = {
+        ...(cloned.options.plugins.tooltip || {}),
+        callbacks: {
+          label: (ctx: any) => `${ctx.dataset.label}: ${ctx.parsed.y ?? ctx.parsed}%`
+        }
+      };
+      return cloned;
+    }
+
+    // For pie: normalize to 100%
+    if (cloned.type === 'pie_chart' && cloned.data.datasets.length >= 1) {
+      const ds = cloned.data.datasets[0];
+      const total = (ds.data || []).reduce((acc: number, v: number) => acc + Number(v || 0), 0) || 1;
+      ds.data = (ds.data || []).map((v: number) => Number((((Number(v || 0)) / total) * 100).toFixed(2)));
+      cloned.options = cloned.options || {};
+      cloned.options.plugins = cloned.options.plugins || {};
+      cloned.options.plugins.tooltip = {
+        ...(cloned.options.plugins.tooltip || {}),
+        callbacks: {
+          label: (ctx: any) => `${ctx.label}: ${ctx.parsed}%`
+        }
+      };
+      return cloned;
+    }
+
+    return config;
+  }
+
+  // Growth enrichment for time-series charts
+  private applyGrowthEnrichment(config: any): any {
+    if (!config?.data?.labels || !config?.data?.datasets?.length) return config;
+
+    const cloned = JSON.parse(JSON.stringify(config));
+    const labels: string[] = cloned.data.labels;
+    const baseDs = cloned.data.datasets[0];
+    const values: number[] = (baseDs.data || []).map((n: any) => Number(n || 0));
+
+    // Compute period-over-period growth %
+    const growthPercents: (number | null)[] = values.map((v, i) => {
+      if (i === 0) return null;
+      const prev = values[i - 1] || 0;
+      if (prev === 0) return null;
+      return Number((((v - prev) / prev) * 100).toFixed(2));
+    });
+
+    // Last period KPI card
+    if (!cloned.meta) cloned.meta = {};
+    if (!cloned.meta.cards) cloned.meta.cards = [];
+    const lastIdx = values.length - 1;
+    if (lastIdx >= 1) {
+      const lastLabel = labels[lastIdx];
+      const prevLabel = labels[lastIdx - 1];
+      const deltaAbs = Number((values[lastIdx] - values[lastIdx - 1]).toFixed(2));
+      const deltaPct = growthPercents[lastIdx] ?? null;
+      const arrow = deltaAbs >= 0 ? '⬆️' : '⬇️';
+      const sign = deltaAbs >= 0 ? '+' : '';
+      cloned.meta.cards.push({
+        type: 'growth',
+        title: `Crescimento ${prevLabel}→${lastLabel}`,
+        value: `${arrow} ${deltaPct !== null ? `${deltaPct}%` : 'N/A'} (${sign}${deltaAbs})`
+      });
+    }
+
+    // Add secondary axis dataset for Growth %
+    cloned.data.datasets.push({
+      label: 'Growth %',
+      data: growthPercents.map(v => (v === null ? null : v)),
+      yAxisID: 'y1',
+      borderColor: '#ef4444',
+      backgroundColor: 'rgba(239, 68, 68, 0.2)',
+      borderWidth: 2,
+      fill: false,
+      tension: 0.1,
+    });
+
+    cloned.options = cloned.options || {};
+    cloned.options.scales = cloned.options.scales || {};
+    cloned.options.scales.y = { ...(cloned.options.scales.y || {}), beginAtZero: true };
+    cloned.options.scales.y1 = {
+      type: 'linear',
+      position: 'right',
+      grid: { drawOnChartArea: false },
+      ticks: { callback: (v: number) => `${v}%` }
+    };
+
+    return cloned;
+  }
+
+  // Narrative summarization
+  private attachNarrative(config: any, data: DataPoint[]): any {
+    const cloned = JSON.parse(JSON.stringify(config));
+    if (!cloned.meta) cloned.meta = {};
+
+    try {
+      const totalRows = data.length;
+      // Identify labels and primary dataset if present
+      const labels: string[] = cloned?.data?.labels || [];
+      const datasets: any[] = cloned?.data?.datasets || [];
+      const hasDatasets = datasets.length > 0 && Array.isArray(datasets[0]?.data);
+
+      let narrativeParts: string[] = [];
+
+      if (hasDatasets) {
+        const ds0 = datasets[0];
+        const values: number[] = (ds0.data || []).map((v: any) => Number(v || 0));
+        const sum = values.reduce((a: number, b: number) => a + b, 0);
+        const avg = values.length ? sum / values.length : 0;
+        const maxVal = Math.max(...values);
+        const minVal = Math.min(...values);
+        const maxIdx = values.indexOf(maxVal);
+        const minIdx = values.indexOf(minVal);
+        const maxLabel = labels[maxIdx] ?? '';
+        const minLabel = labels[minIdx] ?? '';
+
+        narrativeParts.push(`Total de pontos analisados: ${totalRows}.`);
+        if (labels.length) narrativeParts.push(`Categorias/Períodos: ${labels.length}.`);
+        narrativeParts.push(`Média: ${avg.toFixed(1)}; Máx: ${maxVal} (${maxLabel}); Mín: ${minVal} (${minLabel}).`);
+
+        if (datasets.length > 1) {
+          narrativeParts.push(`Foram comparadas ${datasets.length} séries (ex.: ${datasets[0].label} vs ${datasets[1].label}).`);
+        }
+
+        // If growth meta card exists, reference it
+        const growthCard = cloned.meta.cards?.find((c: any) => c.type === 'growth');
+        if (growthCard) {
+          narrativeParts.push(`Variação recente: ${growthCard.value}.`);
+        }
+      } else {
+        narrativeParts.push(`Total de registros: ${totalRows}.`);
+      }
+
+      cloned.meta.narrative = narrativeParts.join(' ');
+    } catch (e) {
+      // Best-effort, ignore narrative errors
+    }
+
+    return cloned;
   }
 
   // NEW: summarization helpers

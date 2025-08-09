@@ -25,7 +25,66 @@ export function generateChartConfig(
   }
 }
 
+// Detect two categorical dimensions (e.g., product and region)
+function findTwoCategoryColumns(data: DataPoint[], dataStructure: DataStructure): string[] {
+  const columns = Object.keys(data[0] || {});
+  const catCols: string[] = [];
+  for (const column of columns) {
+    const type = dataStructure.columnTypes[column];
+    if (type === 'string') {
+      const unique = new Set(data.map(r => r[column]));
+      if (unique.size >= 2 && unique.size <= 20) catCols.push(column);
+    }
+  }
+  return catCols.slice(0, 2);
+}
+
 function generateBarChartConfig(data: DataPoint[], dataStructure: DataStructure): ChartConfig {
+  const twoCats = findTwoCategoryColumns(data, dataStructure);
+  const hasTwoCats = twoCats.length === 2;
+
+  if (hasTwoCats) {
+    // Grouped bars: labels from first category, datasets by second category
+    const [catA, catB] = twoCats;
+    const valueColumn = findValueColumn(data, dataStructure);
+
+    const categoriesA = Array.from(new Set(data.map(r => String(r[catA] ?? ''))));
+    const categoriesB = Array.from(new Set(data.map(r => String(r[catB] ?? ''))));
+
+    const datasets = categoriesB.map((b, idx) => {
+      const series = categoriesA.map(a => {
+        const sum = data
+          .filter(r => String(r[catA] ?? '') === a && String(r[catB] ?? '') === b)
+          .reduce((acc, r) => acc + Number(r[valueColumn] ?? 0), 0);
+        return sum;
+      });
+      return {
+        label: `${b}`,
+        data: series,
+        backgroundColor: generateColors(categoriesB.length)[idx % categoriesB.length],
+        borderColor: '#ffffff',
+        borderWidth: 1,
+        stack: undefined
+      };
+    });
+
+    return {
+      type: 'bar_chart',
+      data: {
+        labels: categoriesA,
+        datasets
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          title: { display: true, text: `${valueColumn} por ${catA} e ${catB}` },
+          legend: { display: true }
+        },
+        scales: { y: { beginAtZero: true } }
+      }
+    };
+  }
+
   const categoryColumn = findCategoryColumn(data, dataStructure);
   const valueColumn = findValueColumn(data, dataStructure);
   
@@ -65,9 +124,51 @@ function generateBarChartConfig(data: DataPoint[], dataStructure: DataStructure)
 }
 
 function generateLineChartConfig(data: DataPoint[], dataStructure: DataStructure): ChartConfig {
-  const categoryColumn = findCategoryColumn(data, dataStructure);
+  // If there are two categories including a time-like, create multi-series by the secondary category
+  const timeCol = findTimeLikeColumn(data, dataStructure);
+  const twoCats = findTwoCategoryColumns(data, dataStructure);
   const valueColumn = findValueColumn(data, dataStructure);
-  
+
+  if (timeCol) {
+    const otherCat = twoCats.find(c => c !== timeCol);
+    const labels = Array.from(new Set(data.map(r => String(r[timeCol] ?? ''))));
+
+    if (otherCat) {
+      const seriesCats = Array.from(new Set(data.map(r => String(r[otherCat] ?? ''))));
+      const datasets = seriesCats.map((c, idx) => {
+        const series = labels.map(label => {
+          const sum = data
+            .filter(r => String(r[timeCol] ?? '') === label && String(r[otherCat] ?? '') === c)
+            .reduce((acc, r) => acc + Number(r[valueColumn] ?? 0), 0);
+          return sum;
+        });
+        return {
+          label: c,
+          data: series,
+          borderColor: generateColors(seriesCats.length)[idx % seriesCats.length],
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          fill: false,
+          tension: 0.1
+        };
+      });
+
+      const sorted = sortLabelsIfMonth(labels, datasets[0]?.data || []);
+
+      return {
+        type: 'line_chart',
+        data: { labels: sorted.labels, datasets },
+        options: {
+          responsive: true,
+          plugins: { title: { display: true, text: `${valueColumn} por ${otherCat} ao longo do tempo` }, legend: { display: true } },
+          scales: { y: { beginAtZero: true } }
+        }
+      };
+    }
+  }
+
+  // Default single-series
+  const categoryColumn = findCategoryColumn(data, dataStructure);
   const { labels, values } = aggregateByCategory(data, categoryColumn, valueColumn);
   const sorted = sortLabelsIfMonth(labels, values);
   
@@ -92,15 +193,9 @@ function generateLineChartConfig(data: DataPoint[], dataStructure: DataStructure
           display: true,
           text: `${valueColumn} ao longo do tempo`
         },
-        legend: {
-          display: true
-        }
+        legend: { display: true }
       },
-      scales: {
-        y: {
-          beginAtZero: true
-        }
-      }
+      scales: { y: { beginAtZero: true } }
     }
   };
 }
@@ -126,13 +221,8 @@ function generatePieChartConfig(data: DataPoint[], dataStructure: DataStructure)
     options: {
       responsive: true,
       plugins: {
-        title: {
-          display: true,
-          text: `Distribuição de ${valueColumn}`
-        },
-        legend: {
-          display: true
-        }
+        title: { display: true, text: `Distribuição de ${valueColumn}` },
+        legend: { display: true }
       }
     }
   };
@@ -162,19 +252,10 @@ function generateAreaChartConfig(data: DataPoint[], dataStructure: DataStructure
     options: {
       responsive: true,
       plugins: {
-        title: {
-          display: true,
-          text: `${valueColumn} - Volume ao longo do tempo`
-        },
-        legend: {
-          display: true
-        }
+        title: { display: true, text: `${valueColumn} - Volume ao longo do tempo` },
+        legend: { display: true }
       },
-      scales: {
-        y: {
-          beginAtZero: true
-        }
-      }
+      scales: { y: { beginAtZero: true } }
     }
   };
 }
@@ -200,19 +281,10 @@ function generateHorizontalBarChartConfig(data: DataPoint[], dataStructure: Data
     options: {
       responsive: true,
       plugins: {
-        title: {
-          display: true,
-          text: `${valueColumn} por ${categoryColumn}`
-        },
-        legend: {
-          display: true
-        }
+        title: { display: true, text: `${valueColumn} por ${categoryColumn}` },
+        legend: { display: true }
       },
-      scales: {
-        y: {
-          beginAtZero: true
-        }
-      }
+      scales: { y: { beginAtZero: true } }
     }
   };
 }
@@ -239,19 +311,10 @@ function generateScatterPlotConfig(data: DataPoint[], dataStructure: DataStructu
     options: {
       responsive: true,
       plugins: {
-        title: {
-          display: true,
-          text: `${valueColumn} vs ${categoryColumn}`
-        },
-        legend: {
-          display: true
-        }
+        title: { display: true, text: `${valueColumn} vs ${categoryColumn}` },
+        legend: { display: true }
       },
-      scales: {
-        y: {
-          beginAtZero: true
-        }
-      }
+      scales: { y: { beginAtZero: true } }
     }
   };
 }
@@ -263,23 +326,9 @@ function generateTableConfig(data: DataPoint[], dataStructure: DataStructure): C
     type: 'table',
     data: {
       labels: columns,
-      datasets: [{
-        label: 'Dados',
-        data: data.map((_, index) => index)
-      }]
+      datasets: [{ label: 'Dados', data: data.map((_, index) => index) }]
     },
-    options: {
-      responsive: true,
-      plugins: {
-        title: {
-          display: true,
-          text: 'Tabela de Dados'
-        },
-        legend: {
-          display: false
-        }
-      }
-    }
+    options: { responsive: true, plugins: { title: { display: true, text: 'Tabela de Dados' }, legend: { display: false } } }
   };
 }
 
@@ -303,6 +352,17 @@ function findCategoryColumn(data: DataPoint[], dataStructure: DataStructure): st
   
   // Fallback: any column
   return columns[0] || '';
+}
+
+function findTimeLikeColumn(data: DataPoint[], dataStructure: DataStructure): string | null {
+  const columns = Object.keys(data[0] || {});
+  for (const column of columns) {
+    const lower = column.toLowerCase();
+    if (dataStructure.columnTypes[column] === 'date' || lower.includes('month') || lower.includes('date') || lower.includes('time')) {
+      return column;
+    }
+  }
+  return null;
 }
 
 function findValueColumn(data: DataPoint[], dataStructure: DataStructure): string {

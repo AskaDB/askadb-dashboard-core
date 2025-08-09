@@ -43,23 +43,12 @@ export interface ChartConfig {
       borderWidth?: number;
       fill?: boolean;
       tension?: number;
+      stack?: string;
+      yAxisID?: string;
     }>;
   };
-  options: {
-    responsive: boolean;
-    plugins: {
-      title: {
-        display: boolean;
-        text: string;
-      };
-      legend: {
-        display: boolean;
-      };
-    };
-    scales?: {
-      y?: {
-        beginAtZero: boolean;
-      };
-    };
-  };
+  // Allow flexible chart options (multi-axes, stacking, tooltips, etc.)
+  options: any;
+  // Optional metadata for UI narratives/KPIs
+  meta?: any;
 }
