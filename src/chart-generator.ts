@@ -26,21 +26,20 @@ export function generateChartConfig(
 }
 
 function generateBarChartConfig(data: DataPoint[], dataStructure: DataStructure): ChartConfig {
-  const columns = Object.keys(data[0] || {});
   const categoryColumn = findCategoryColumn(data, dataStructure);
   const valueColumn = findValueColumn(data, dataStructure);
   
-  const labels = data.map(row => String(row[categoryColumn] || ''));
-  const values = data.map(row => Number(row[valueColumn] || 0));
+  const { labels, values } = aggregateByCategory(data, categoryColumn, valueColumn);
+  const sorted = sortLabelsIfMonth(labels, values);
   
   return {
     type: 'bar_chart',
     data: {
-      labels,
+      labels: sorted.labels,
       datasets: [{
         label: valueColumn,
-        data: values,
-        backgroundColor: generateColors(values.length),
+        data: sorted.values,
+        backgroundColor: generateColors(sorted.values.length),
         borderColor: '#3b82f6',
         borderWidth: 1
       }]
@@ -66,20 +65,19 @@ function generateBarChartConfig(data: DataPoint[], dataStructure: DataStructure)
 }
 
 function generateLineChartConfig(data: DataPoint[], dataStructure: DataStructure): ChartConfig {
-  const columns = Object.keys(data[0] || {});
   const categoryColumn = findCategoryColumn(data, dataStructure);
   const valueColumn = findValueColumn(data, dataStructure);
   
-  const labels = data.map(row => String(row[categoryColumn] || ''));
-  const values = data.map(row => Number(row[valueColumn] || 0));
+  const { labels, values } = aggregateByCategory(data, categoryColumn, valueColumn);
+  const sorted = sortLabelsIfMonth(labels, values);
   
   return {
     type: 'line_chart',
     data: {
-      labels,
+      labels: sorted.labels,
       datasets: [{
         label: valueColumn,
-        data: values,
+        data: sorted.values,
         borderColor: '#3b82f6',
         backgroundColor: 'rgba(59, 130, 246, 0.1)',
         borderWidth: 2,
@@ -108,12 +106,10 @@ function generateLineChartConfig(data: DataPoint[], dataStructure: DataStructure
 }
 
 function generatePieChartConfig(data: DataPoint[], dataStructure: DataStructure): ChartConfig {
-  const columns = Object.keys(data[0] || {});
   const categoryColumn = findCategoryColumn(data, dataStructure);
   const valueColumn = findValueColumn(data, dataStructure);
   
-  const labels = data.map(row => String(row[categoryColumn] || ''));
-  const values = data.map(row => Number(row[valueColumn] || 0));
+  const { labels, values } = aggregateByCategory(data, categoryColumn, valueColumn);
   
   return {
     type: 'pie_chart',
@@ -143,20 +139,19 @@ function generatePieChartConfig(data: DataPoint[], dataStructure: DataStructure)
 }
 
 function generateAreaChartConfig(data: DataPoint[], dataStructure: DataStructure): ChartConfig {
-  const columns = Object.keys(data[0] || {});
   const categoryColumn = findCategoryColumn(data, dataStructure);
   const valueColumn = findValueColumn(data, dataStructure);
   
-  const labels = data.map(row => String(row[categoryColumn] || ''));
-  const values = data.map(row => Number(row[valueColumn] || 0));
+  const { labels, values } = aggregateByCategory(data, categoryColumn, valueColumn);
+  const sorted = sortLabelsIfMonth(labels, values);
   
   return {
     type: 'area_chart',
     data: {
-      labels,
+      labels: sorted.labels,
       datasets: [{
         label: valueColumn,
-        data: values,
+        data: sorted.values,
         borderColor: '#10b981',
         backgroundColor: 'rgba(16, 185, 129, 0.3)',
         borderWidth: 2,
@@ -185,12 +180,10 @@ function generateAreaChartConfig(data: DataPoint[], dataStructure: DataStructure
 }
 
 function generateHorizontalBarChartConfig(data: DataPoint[], dataStructure: DataStructure): ChartConfig {
-  const columns = Object.keys(data[0] || {});
   const categoryColumn = findCategoryColumn(data, dataStructure);
   const valueColumn = findValueColumn(data, dataStructure);
   
-  const labels = data.map(row => String(row[categoryColumn] || ''));
-  const values = data.map(row => Number(row[valueColumn] || 0));
+  const { labels, values } = aggregateByCategory(data, categoryColumn, valueColumn);
   
   return {
     type: 'horizontal_bar',
@@ -225,7 +218,6 @@ function generateHorizontalBarChartConfig(data: DataPoint[], dataStructure: Data
 }
 
 function generateScatterPlotConfig(data: DataPoint[], dataStructure: DataStructure): ChartConfig {
-  const columns = Object.keys(data[0] || {});
   const categoryColumn = findCategoryColumn(data, dataStructure);
   const valueColumn = findValueColumn(data, dataStructure);
   
@@ -273,7 +265,7 @@ function generateTableConfig(data: DataPoint[], dataStructure: DataStructure): C
       labels: columns,
       datasets: [{
         label: 'Dados',
-        data: data.map((row, index) => index)
+        data: data.map((_, index) => index)
       }]
     },
     options: {
@@ -293,22 +285,23 @@ function generateTableConfig(data: DataPoint[], dataStructure: DataStructure): C
 
 function findCategoryColumn(data: DataPoint[], dataStructure: DataStructure): string {
   const columns = Object.keys(data[0] || {});
+
+  // Prefer time-related columns first (dates or columns containing month/date/time)
+  for (const column of columns) {
+    const lower = column.toLowerCase();
+    if (dataStructure.columnTypes[column] === 'date' || lower.includes('month') || lower.includes('date') || lower.includes('time')) {
+      return column;
+    }
+  }
   
-  // Look for string columns first
+  // Then look for string columns
   for (const column of columns) {
     if (dataStructure.columnTypes[column] === 'string') {
       return column;
     }
   }
   
-  // Look for date columns
-  for (const column of columns) {
-    if (dataStructure.columnTypes[column] === 'date') {
-      return column;
-    }
-  }
-  
-  // Default to first column
+  // Fallback: any column
   return columns[0] || '';
 }
 
@@ -338,4 +331,37 @@ function generateColors(count: number): string[] {
   }
   
   return result;
+}
+
+function aggregateByCategory(data: DataPoint[], categoryColumn: string, valueColumn: string): { labels: string[]; values: number[] } {
+  const totals = new Map<string, number>();
+  for (const row of data) {
+    const key = String(row[categoryColumn] ?? '');
+    const value = Number(row[valueColumn] ?? 0);
+    totals.set(key, (totals.get(key) || 0) + value);
+  }
+  const labels = Array.from(totals.keys());
+  const values = labels.map(label => totals.get(label) || 0);
+  return { labels, values };
+}
+
+function sortLabelsIfMonth(labels: string[], values: number[]): { labels: string[]; values: number[] } {
+  const monthOrder = ['january','february','march','april','may','june','july','august','september','october','november','december','jan','feb','mar','apr'];
+  const monthOrderPt = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  const idx = (name: string) => {
+    const lower = name.toLowerCase();
+    let i = monthOrderPt.indexOf(lower);
+    if (i !== -1) return i;
+    i = monthOrder.indexOf(lower);
+    if (i !== -1) return i;
+    return 999; // non-months at end
+  };
+  const indices = labels.map((l, i) => ({ i, order: idx(l) }));
+  if (indices.every(x => x.order === 999)) {
+    return { labels, values };
+  }
+  indices.sort((a, b) => a.order - b.order);
+  const sortedLabels = indices.map(x => labels[x.i]);
+  const sortedValues = indices.map(x => values[x.i]);
+  return { labels: sortedLabels, values: sortedValues };
 }
